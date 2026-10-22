@@ -1,0 +1,10 @@
+body { width: 340px; background: var(--surface); }
+.popup { padding: 14px 16px 16px; }
+.popup-head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.popup-head .muted { margin-left: auto; font-size: 12.5px; }
+.popup-total { font-size: 34px; font-weight: 600; line-height: 1.1; }
+.popup-sub { font-size: 12.5px; margin: 2px 0 14px; }
+.popup h3 { font-size: 12.5px; color: var(--text-2); font-weight: 600; margin: 12px 0 6px; }
+.popup .barlist-row { grid-template-columns: 110px 1fr 70px; padding: 2px 0; }
+.popup-alert { display: flex; gap: 8px; align-items: center; font-size: 12.5px; padding: 4px 0; }
+.popup-open { width: 100%; margin-top: 14px; padding: 9px; }

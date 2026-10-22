@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SpendLens</title>
+  <link rel="icon" href="../../icons/icon32.png">
+  <link rel="stylesheet" href="dashboard.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img src="../../icons/icon48.png" alt="" width="28" height="28">
+      <span>SpendLens</span>
+    </div>
+    <nav class="tabs" role="tablist" aria-label="Sections">
+      <button role="tab" data-view="overview">Overview</button>
+      <button role="tab" data-view="transactions">Transactions</button>
+      <button role="tab" data-view="budgets">Budgets</button>
+      <button role="tab" data-view="subscriptions">Subscriptions</button>
+      <button role="tab" data-view="settings">Settings</button>
+    </nav>
+    <div class="actions">
+      <button class="btn btn-primary" id="import-btn">Import CSV</button>
+      <div class="menu">
+        <button class="btn" id="export-btn" aria-haspopup="menu" aria-expanded="false">Export ▾</button>
+        <div class="menu-list" id="export-menu" role="menu" hidden>
+          <button role="menuitem" data-export="xlsx">Excel workbook (.xlsx)</button>
+          <button role="menuitem" data-export="csv">Transactions (.csv)</button>
+          <button role="menuitem" data-export="json">Full backup (.json)</button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <section class="filters" id="filters" aria-label="Filters">
+    <label>Date range
+      <select id="range">
+        <option value="thisMonth">This month</option>
+        <option value="lastMonth">Last month</option>
+        <option value="last30">Last 30 days</option>
+        <option value="last90">Last 90 days</option>
+        <option value="ytd">Year to date</option>
+        <option value="last12">Last 12 months</option>
+        <option value="all">All time</option>
+        <option value="custom">Custom…</option>
+      </select>
+    </label>
+    <label class="custom-range" hidden>From <input type="date" id="from"></label>
+    <label class="custom-range" hidden>To <input type="date" id="to"></label>
+    <label>Account
+      <select id="account"></select>
+    </label>
+    <span class="range-label muted" id="range-label"></span>
+  </section>
+
+  <main id="view" tabindex="-1"></main>
+
+  <input type="file" id="file-input" accept=".csv,text/csv" multiple hidden>
+  <dialog id="import-dialog" aria-labelledby="import-title"></dialog>
+  <dialog id="confirm-dialog"></dialog>
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+  <script type="module" src="main.js"></script>
+</body>
+</html>

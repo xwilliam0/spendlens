@@ -1,0 +1,14 @@
+{
+  "name": "spendlens",
+  "version": "1.0.0",
+  "description": "Privacy-first Chrome extension that categorizes and visualizes spending from your bank and credit card CSV exports.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "node --test \"test/*.test.js\"",
+    "icons": "node scripts/make-icons.mjs",
+    "serve": "node scripts/serve.mjs",
+    "package": "node scripts/package.mjs"
+  },
+  "license": "MIT"
+}
