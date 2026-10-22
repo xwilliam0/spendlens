@@ -4,6 +4,7 @@ import { toCSV } from '../lib/csv.js';
 import { buildXlsx } from '../lib/xlsx.js';
 import { spendingByCategory, spendingByMerchant, monthlyTotals, detectRecurring, summarize } from '../lib/analytics.js';
 import { todayISO } from '../lib/format.js';
+import { makeBackup } from '../lib/storage.js';
 
 function download(data, filename, type) {
   const url = URL.createObjectURL(new Blob([data], { type }));
@@ -93,8 +94,10 @@ export function exportXLSX(app) {
   app.toast(`Exported workbook with ${txns.length} transactions.`);
 }
 
-export function exportJSON(app) {
-  const backup = { app: 'SpendLens', exportedAt: new Date().toISOString(), ...app.state };
+export async function exportJSON(app) {
+  const backup = await makeBackup(app.state);
   download(JSON.stringify(backup, null, 2), `spendlens-backup_${todayISO()}.json`, 'application/json');
-  app.toast('Backup downloaded.');
+  app.toast(backup.encrypted
+    ? 'Encrypted backup downloaded. Restoring it needs your current passphrase.'
+    : 'Backup downloaded. It is NOT encrypted. Set a passphrase in Settings to encrypt backups.');
 }

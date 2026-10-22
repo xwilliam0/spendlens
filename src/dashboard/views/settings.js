@@ -1,5 +1,9 @@
 import { categorize } from '../../lib/categorize.js';
-import { clearState, DEFAULT_STATE } from '../../lib/storage.js';
+import {
+  clearState, DEFAULT_STATE, readBackup, getSecurity, setAutoLockMinutes, touch,
+  enableEncryption, changePassphrase, disableEncryption,
+} from '../../lib/storage.js';
+import { passphraseProblem } from '../../lib/crypto.js';
 import { hash } from '../../lib/importers.js';
 import { el } from '../../lib/charts.js';
 
@@ -118,9 +122,11 @@ export function renderSettings(root, app) {
   restoreInput.addEventListener('change', async () => {
     const file = restoreInput.files[0];
     if (!file) return;
+    restoreInput.value = '';
     try {
-      const data = JSON.parse(await file.text());
-      if (!Array.isArray(data.transactions) || !Array.isArray(data.accounts)) throw new Error('missing transactions/accounts');
+      const data = await readBackup(JSON.parse(await file.text()),
+        () => app.promptPassphrase('This backup is encrypted. Enter the passphrase that was set when it was created.', 'Decrypt'));
+      if (!data) return;
       if (!(await app.confirm(`Replace all current data with this backup (${data.transactions.length} transactions)?`, 'Restore'))) return;
       for (const k of Object.keys(DEFAULT_STATE)) if (data[k] !== undefined) state[k] = data[k];
       await app.save();
@@ -131,7 +137,7 @@ export function renderSettings(root, app) {
     }
   });
 
-  const data = section('Your data', 'Everything is stored only in this browser profile (chrome.storage.local). Nothing is uploaded anywhere. Export a backup before uninstalling the extension.',
+  const data = section('Your data', `Everything is stored only in this browser profile${app.encrypted ? ', encrypted' : ''}. Nothing is uploaded anywhere. Export a backup before uninstalling the extension.`,
     el('div', { class: 'inline-form' },
       el('span', {}, `${state.transactions.length.toLocaleString()} transactions across ${state.accounts.length} accounts.`)),
     el('div', { class: 'inline-form' },
@@ -142,12 +148,112 @@ export function renderSettings(root, app) {
         class: 'btn btn-danger',
         onclick: async () => {
           if (!(await app.confirm('Permanently delete ALL transactions, accounts, rules and budgets?', 'Delete everything'))) return;
-          await clearState();
+          await clearState(); // also removes the encrypted vault and passphrase
           Object.assign(state, structuredClone(DEFAULT_STATE));
           await app.save();
+          await app.refreshSecurity();
           app.rerender();
         },
       }, 'Delete all data')));
 
-  root.replaceChildren(accounts, categories, rules, data);
+  const security = el('div');
+  renderSecurity(security, app);
+  root.replaceChildren(security, accounts, categories, rules, data);
+}
+
+// ----- Security (encryption at rest) -----
+
+const AUTO_LOCK_OPTIONS = [[5, '5 minutes'], [15, '15 minutes'], [30, '30 minutes'], [60, '1 hour'], [0, 'Only when the browser closes']];
+
+function passwordField(label, autocomplete) {
+  const input = el('input', { type: 'password', autocomplete, 'aria-label': label, placeholder: label, required: true });
+  return input;
+}
+
+async function renderSecurity(container, app) {
+  const sec = await getSecurity();
+  const status = (ok, text) => el('div', { class: 'security-status' },
+    el('span', { class: 'status-icon', style: { background: ok ? 'var(--good)' : 'var(--warning)' } }, ok ? '✓' : '!'),
+    el('strong', {}, text));
+  const busy = (btn, label) => { btn.disabled = true; btn.textContent = label; };
+
+  if (!app.encrypted) {
+    const p1 = passwordField('New passphrase', 'new-password');
+    const p2 = passwordField('Repeat passphrase', 'new-password');
+    const ack = el('input', { type: 'checkbox', required: true });
+    const btn = el('button', { class: 'btn btn-primary', type: 'submit' }, 'Encrypt my data');
+    const form = el('form', {
+      class: 'stack-form',
+      onsubmit: async (e) => {
+        e.preventDefault();
+        const problem = passphraseProblem(p1.value) || (p1.value !== p2.value ? 'The passphrases don\'t match.' : null);
+        if (problem) { app.toast(problem); return; }
+        busy(btn, 'Encrypting…');
+        await enableEncryption(app.state, p1.value);
+        await app.refreshSecurity();
+        app.toast('Your data is now encrypted. Keep your passphrase somewhere safe.');
+        app.rerender();
+      },
+    }, p1, p2,
+    el('label', { class: 'check' }, ack, 'I understand that if I forget this passphrase, my SpendLens data cannot be recovered. I would have to re-import my CSV files.'),
+    el('div', {}, btn));
+    container.replaceChildren(section('Security',
+      'Without a passphrase, your transactions are stored readable on disk in your Chrome profile. Websites and other extensions can\'t access them, but malware or anyone using your Windows account could. A passphrase encrypts everything with AES-256-GCM. The key is derived from your passphrase (PBKDF2, 600,000 rounds), kept only in memory, and forgotten when SpendLens auto-locks or the browser closes.',
+      status(false, 'Not encrypted'), form));
+    return;
+  }
+
+  const autoLock = el('select', { 'aria-label': 'Auto-lock after' },
+    AUTO_LOCK_OPTIONS.map(([v, label]) => el('option', { value: String(v), selected: v === sec.autoLockMinutes }, label)));
+  autoLock.addEventListener('change', async () => {
+    await setAutoLockMinutes(Number(autoLock.value));
+    await touch();
+    app.toast('Auto-lock updated.');
+  });
+
+  const cur = passwordField('Current passphrase', 'current-password');
+  const n1 = passwordField('New passphrase', 'new-password');
+  const n2 = passwordField('Repeat new passphrase', 'new-password');
+  const changeBtn = el('button', { class: 'btn', type: 'submit' }, 'Change passphrase');
+  const changeForm = el('form', {
+    class: 'stack-form',
+    onsubmit: async (e) => {
+      e.preventDefault();
+      const problem = passphraseProblem(n1.value) || (n1.value !== n2.value ? 'The new passphrases don\'t match.' : null);
+      if (problem) { app.toast(problem); return; }
+      busy(changeBtn, 'Re-encrypting…');
+      try {
+        await changePassphrase(app.state, cur.value, n1.value);
+        app.toast('Passphrase changed. Older encrypted backups still need the old passphrase.');
+      } catch {
+        app.toast('Current passphrase is wrong.');
+      }
+      app.rerender();
+    },
+  }, cur, n1, n2, el('div', {}, changeBtn));
+
+  const disableBtn = el('button', {
+    class: 'btn btn-danger', type: 'button',
+    onclick: async () => {
+      const pass = await app.promptPassphrase('Turning off encryption stores your data unencrypted on disk again. Enter your passphrase to confirm.', 'Turn off encryption');
+      if (pass == null) return;
+      try {
+        await disableEncryption(app.state, pass);
+        await app.refreshSecurity();
+        app.toast('Encryption turned off.');
+      } catch {
+        app.toast('Wrong passphrase. Encryption is still on.');
+      }
+      app.rerender();
+    },
+  }, 'Turn off encryption…');
+
+  container.replaceChildren(section('Security',
+    'Your data is encrypted with AES-256-GCM. It is only decrypted in memory while SpendLens is unlocked.',
+    status(true, 'Encrypted at rest'),
+    el('div', { class: 'inline-form' },
+      el('label', {}, 'Auto-lock after inactivity ', autoLock),
+      el('button', { class: 'btn', type: 'button', onclick: app.lockNow }, 'Lock now')),
+    el('details', { style: { marginTop: '14px' } }, el('summary', {}, 'Change passphrase'), changeForm),
+    el('div', { class: 'inline-form' }, disableBtn)));
 }

@@ -21,6 +21,7 @@
       <button role="tab" data-view="settings">Settings</button>
     </nav>
     <div class="actions">
+      <button class="btn" id="lock-btn" title="Lock now: requires your passphrase to reopen" hidden>Lock</button>
       <button class="btn btn-primary" id="import-btn">Import CSV</button>
       <div class="menu">
         <button class="btn" id="export-btn" aria-haspopup="menu" aria-expanded="false">Export ▾</button>
@@ -28,6 +29,7 @@
           <button role="menuitem" data-export="xlsx">Excel workbook (.xlsx)</button>
           <button role="menuitem" data-export="csv">Transactions (.csv)</button>
           <button role="menuitem" data-export="json">Full backup (.json)</button>
+          <p class="menu-note">Excel and CSV files are readable by anyone who has the file. Backups are encrypted when you've set a passphrase.</p>
         </div>
       </div>
     </div>

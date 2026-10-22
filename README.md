@@ -4,6 +4,7 @@ SpendLens is a privacy-first Chrome extension (Manifest V3). It turns the CSV ex
 
 ## Features
 
+- **Encryption at rest (optional, recommended).** Set a passphrase and every stored transaction is encrypted with AES-256-GCM, using a key derived via PBKDF2-SHA256 (600,000 iterations). The key exists only in memory, auto-locks after inactivity, and is forgotten when the browser closes. Backups are encrypted too.
 - **Import from any bank.** Discover, Bank of America (credit and checking), Chase, Capital One, Citi and Amex formats are detected automatically. Any other CSV, even one with no header row, works through a column-mapping dialog with a live preview.
 - **Auto-categorization.** About 340 merchant keywords, a priority order (user rules, then built-in keywords, then the issuer's own category), and word-boundary matching so "GAP" doesn't match "SINGAPORE". When you recategorize a transaction, SpendLens offers to create a rule for that merchant.
 - **Correct totals.** Money is stored as integer cents. Credit card payments are classed as transfers, so paying your Discover bill from BofA checking isn't counted twice. Refunds reduce their category's total.
@@ -30,10 +31,24 @@ SpendLens is a privacy-first Chrome extension (Manifest V3). It turns the CSV ex
 | Bank of America | Account page → **Download** (above transactions) → "Microsoft Excel Format" |
 | Chase / Capital One / Citi / Amex | Account activity → Download → CSV |
 
+## Security model
+
+| Threat | Protection |
+|---|---|
+| Data leaving the computer | Content Security Policy `connect-src 'none'`. The browser blocks every outbound request. There are no host permissions or content scripts. |
+| Someone reading the Chrome profile on disk (malware, a shared PC, a stolen laptop) | With a passphrase set, only an AES-256-GCM ciphertext is stored. A wrong passphrase or tampered data fails authentication. |
+| Leftover plaintext after turning encryption on | `chrome.storage.local` is LevelDB, which is append-only, so deleted values linger in its files. SpendLens forces compactions by writing and deleting random filler, which purges old copies. Checked by scanning Chrome's database files after enabling encryption. |
+| Someone using an unlocked browser | Auto-lock after 5 to 60 minutes idle, plus a Lock button. Turning off encryption or changing the passphrase requires the current passphrase. |
+| The key leaking to disk | The key is cached only in `chrome.storage.session`, which is memory-only. Checked by searching the entire browser profile for the key. |
+| Malicious merchant names in CSVs | Inserted with `textContent` only (no XSS). CSV export neutralizes `=`, `+`, `@` formulas. |
+| Accidentally committing statements to git | `.gitignore` excludes `*.csv`, `*.xlsx`, `*.ofx`, `*.qfx` and backups, except the fake `sample-data/`. |
+
+**Not protected against:** malware running while SpendLens is unlocked (it could read memory or log keystrokes), and a forgotten passphrase (there is no recovery by design). Excel and CSV exports are plain files, so handle them like bank statements. The extension cannot delete the CSVs you downloaded, but it reminds you after each import.
+
 ## Development
 
 ```bash
-npm test          # 31 unit tests (Node's built-in runner, no dependencies)
+npm test          # 41 unit tests (Node's built-in runner, no dependencies)
 npm run serve     # http://localhost:5173/src/dashboard/dashboard.html?demo  (uses localStorage instead of chrome.storage)
 npm run icons     # regenerate icons/*.png
 npm run package   # dist/spendlens.zip for the Chrome Web Store
@@ -51,7 +66,8 @@ src/lib/                 Pure, DOM-free modules (unit tested in Node)
   format.js              Cents and UTC-safe ISO date helpers
   xlsx.js                .xlsx writer (OOXML + store-only ZIP + CRC-32) from scratch
   charts.js              SVG/HTML charts with tooltips and accessible table twins
-  storage.js             chrome.storage.local wrapper (localStorage fallback)
+  crypto.js              AES-256-GCM + PBKDF2 via Web Crypto
+  storage.js             Plain or encrypted vault storage, session key, auto-lock, LevelDB scrub
 src/dashboard/           Full-page app: views, import dialog, export
 src/popup/               Toolbar popup
 test/                    Unit tests

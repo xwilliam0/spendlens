@@ -1,6 +1,6 @@
 // Toolbar popup: a glance at this month, plus a button into the dashboard.
 
-import { loadState } from '../lib/storage.js';
+import { loadState, unlock, LockedError } from '../lib/storage.js';
 import { kindMap, filterTransactions, summarize, spendingByCategory, budgetStatus } from '../lib/analytics.js';
 import { fmtMoney, fmtMonth, startOfMonth, endOfMonth, todayISO, addMonths, addDays } from '../lib/format.js';
 import { el, setChildren, barList } from '../lib/charts.js';
@@ -12,13 +12,38 @@ const openDashboard = () => {
   window.close();
 };
 
+function showUnlock(content) {
+  const input = el('input', { type: 'password', autocomplete: 'current-password', placeholder: 'Passphrase', 'aria-label': 'Passphrase', style: { width: '100%' } });
+  const error = el('div', { class: 'lock-error', role: 'alert' });
+  const btn = el('button', { class: 'btn', type: 'submit', style: { width: '100%' } }, 'Unlock');
+  content.replaceChildren(el('form', {
+    class: 'popup-unlock',
+    onsubmit: async (e) => {
+      e.preventDefault();
+      btn.disabled = true;
+      btn.textContent = 'Unlocking…';
+      if (await unlock(input.value)) { init(); return; }
+      error.textContent = 'Wrong passphrase.';
+      btn.disabled = false;
+      btn.textContent = 'Unlock';
+      input.select();
+    },
+  }, el('p', { class: 'muted' }, 'SpendLens is locked. Your data is encrypted.'), input, error, btn));
+  input.focus();
+}
+
 async function init() {
-  document.getElementById('open').addEventListener('click', openDashboard);
-  const state = await loadState();
-  const kinds = kindMap(state.categories);
   const today = todayISO();
   const content = document.getElementById('content');
   document.getElementById('month').textContent = fmtMonth(today.slice(0, 7), true);
+  let state;
+  try {
+    state = await loadState();
+  } catch (e) {
+    if (e instanceof LockedError) { showUnlock(content); return; }
+    throw e;
+  }
+  const kinds = kindMap(state.categories);
 
   if (!state.transactions.length) {
     content.replaceChildren(el('p', { class: 'muted' }, 'No data yet. Open the dashboard to import CSV statements from Discover, Bank of America and other banks.'));
@@ -56,4 +81,5 @@ async function init() {
   barList(listEl, { rows: top.map((r) => ({ label: name(r.category), value: r.cents })), format: fmtMoney });
 }
 
+document.getElementById('open').addEventListener('click', openDashboard);
 init();

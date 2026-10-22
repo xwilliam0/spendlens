@@ -1,7 +1,9 @@
 // Dashboard controller: owns state, filters, routing between views,
 // and shared UI helpers (toast, confirm dialog, chart cards).
 
-import { loadState, saveState, onExternalChange } from '../lib/storage.js';
+import {
+  loadState, saveState, onExternalChange, LockedError, unlock, lock, touch, isEncrypted, idleMinutesRemaining, clearState,
+} from '../lib/storage.js';
 import { kindMap, filterTransactions, spendingByCategory } from '../lib/analytics.js';
 import { addDays, addMonths, endOfMonth, startOfMonth, todayISO, fmtDate } from '../lib/format.js';
 import { el, setChildren, dataTable, hideTooltip } from '../lib/charts.js';
@@ -31,6 +33,7 @@ export const app = {
   view: 'overview',
   filters: { range: 'last90', from: null, to: null, account: '' },
   kinds: new Map(),
+  encrypted: false,
 
   catName(id) { return app.state.categories.find((c) => c.id === id)?.name || 'Uncategorized'; },
   acctName(id) { return app.state.accounts.find((a) => a.id === id)?.name || 'Unknown account'; },
@@ -82,12 +85,26 @@ export const app = {
 
   async save(keys) {
     app.kinds = kindMap(app.state.categories);
-    await saveState(app.state, keys);
+    try {
+      await saveState(app.state, keys);
+    } catch (e) {
+      if (!(e instanceof LockedError)) throw e;
+      showLockScreen();
+      toast('SpendLens locked before your last change could be saved.');
+    }
+  },
+
+  /** Re-read encryption status after it's turned on or off in Settings. */
+  async refreshSecurity() {
+    app.encrypted = await isEncrypted();
+    $('#lock-btn').hidden = !app.encrypted;
   },
 
   rerender() { render(); },
   toast,
   confirm: confirmDialog,
+  promptPassphrase: passphraseDialog,
+  lockNow: async () => { await lock(); showLockScreen(); },
   chartCard,
   openImport: () => $('#file-input').click(),
   async loadSample() {
@@ -150,6 +167,11 @@ function emptyState() {
         el('ol', {}, el('li', {}, 'Open the checking or credit card account'), el('li', {}, 'Click "Download" above the transactions'), el('li', {}, 'Choose "Microsoft Excel Format" (.csv)'))),
       el('div', { class: 'card' }, el('h3', {}, 'Others'),
         el('p', {}, 'Chase, Capital One, Citi and Amex are detected automatically. Any other CSV works too: you\'ll just pick which column is which.'))),
+    app.encrypted ? null : el('div', { class: 'card security-callout' },
+      el('div', {},
+        el('strong', {}, 'Recommended: set a passphrase first'),
+        el('p', { class: 'muted' }, 'Encrypts your transactions on disk, so they stay unreadable even if someone copies your Chrome profile.')),
+      el('button', { class: 'btn', onclick: () => { app.view = 'settings'; location.hash = 'settings'; render(); } }, 'Set up encryption')),
     el('div', { class: 'cta' },
       el('button', { class: 'btn btn-primary', onclick: app.openImport }, 'Import CSV files'),
       el('button', { class: 'btn', onclick: () => app.loadSample() }, 'Try with sample data')));
@@ -193,7 +215,7 @@ function toast(message, action) {
     action ? el('button', { onclick: () => { t.hidden = true; action.run(); } }, action.label) : null);
   t.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { t.hidden = true; }, action ? 9000 : 3500);
+  toastTimer = setTimeout(() => { t.hidden = true; }, action ? 9000 : Math.max(3500, message.length * 70));
 }
 
 function confirmDialog(message, confirmLabel = 'Delete') {
@@ -207,6 +229,90 @@ function confirmDialog(message, confirmLabel = 'Delete') {
     d.addEventListener('cancel', () => resolve(false), { once: true });
     d.showModal();
   });
+}
+
+/** Ask for a passphrase. Resolves to the string, or null if cancelled. */
+function passphraseDialog(message, submitLabel = 'Continue') {
+  const d = $('#confirm-dialog');
+  return new Promise((resolve) => {
+    const input = el('input', { type: 'password', autocomplete: 'current-password', 'aria-label': 'Passphrase', style: { width: '100%' } });
+    const done = (value) => { d.close(); resolve(value); };
+    d.replaceChildren(el('form', { onsubmit: (e) => { e.preventDefault(); done(input.value); } },
+      el('div', { class: 'dialog-body' }, el('p', {}, message), input),
+      el('div', { class: 'dialog-foot' },
+        el('button', { class: 'btn', type: 'button', onclick: () => done(null) }, 'Cancel'),
+        el('button', { class: 'btn btn-primary', type: 'submit' }, submitLabel))));
+    d.addEventListener('cancel', () => resolve(null), { once: true });
+    d.showModal();
+    input.focus();
+  });
+}
+
+// ---------- Lock screen ----------
+
+function showLockScreen() {
+  app.state = null; // drop decrypted data from memory
+  hideTooltip();
+  for (const d of document.querySelectorAll('dialog[open]')) d.close();
+  $('#toast').hidden = true;
+  document.body.classList.add('locked');
+
+  const input = el('input', { type: 'password', autocomplete: 'current-password', placeholder: 'Passphrase', 'aria-label': 'Passphrase' });
+  const error = el('p', { class: 'lock-error', role: 'alert' });
+  const btn = el('button', { class: 'btn btn-primary', type: 'submit' }, 'Unlock');
+  const form = el('form', {
+    class: 'card lock-card',
+    onsubmit: async (e) => {
+      e.preventDefault();
+      btn.disabled = true;
+      btn.textContent = 'Unlocking…';
+      error.textContent = '';
+      if (await unlock(input.value)) {
+        input.value = '';
+        await start();
+      } else {
+        error.textContent = 'Wrong passphrase. Try again.';
+        btn.disabled = false;
+        btn.textContent = 'Unlock';
+        input.select();
+      }
+    },
+  },
+  el('img', { src: '../../icons/icon48.png', alt: '', width: 48, height: 48 }),
+  el('h1', {}, 'SpendLens is locked'),
+  el('p', { class: 'muted' }, 'Your financial data is encrypted on this computer. Enter your passphrase to unlock it.'),
+  input, error, btn,
+  el('details', {},
+    el('summary', {}, 'Forgot your passphrase?'),
+    el('p', { class: 'muted' }, 'Encrypted data cannot be recovered without the passphrase. That is what keeps it safe. You can delete it and start over by importing your CSV files again.'),
+    el('button', {
+      class: 'btn btn-danger', type: 'button',
+      onclick: async () => {
+        if (!(await confirmDialog('Permanently delete all encrypted SpendLens data on this computer?', 'Delete everything'))) return;
+        await clearState();
+        await start();
+      },
+    }, 'Delete all data and start over')));
+  viewEl.replaceChildren(form);
+  input.focus();
+}
+
+// ---------- Idle auto-lock ----------
+
+function bindIdleLock() {
+  let lastTouch = 0;
+  const onActivity = () => {
+    if (!app.encrypted || !app.state) return;
+    const now = Date.now();
+    if (now - lastTouch > 15000) { lastTouch = now; touch(); }
+  };
+  for (const ev of ['pointerdown', 'pointermove', 'keydown', 'wheel']) document.addEventListener(ev, onActivity, { passive: true });
+  setInterval(async () => {
+    if (!app.encrypted || !app.state) return;
+    // null = auto-lock off, or the key is already gone (onExternalChange shows the lock screen then).
+    const left = await idleMinutesRemaining();
+    if (left != null && left <= 0) app.lockNow();
+  }, 15000);
 }
 
 // ---------- Wiring ----------
@@ -236,7 +342,7 @@ function bindChrome() {
     }
     syncCustom();
     app.state.settings.range = range.value;
-    saveState(app.state, ['settings']);
+    app.save(['settings']);
     render();
   });
   $('#from').addEventListener('change', (e) => { app.filters.from = e.target.value; render(); });
@@ -244,6 +350,7 @@ function bindChrome() {
   $('#account').addEventListener('change', (e) => { app.filters.account = e.target.value; render(); });
 
   $('#import-btn').addEventListener('click', app.openImport);
+  $('#lock-btn').addEventListener('click', app.lockNow);
   $('#file-input').addEventListener('change', async (e) => {
     const files = [...e.target.files];
     e.target.value = '';
@@ -281,27 +388,40 @@ function bindChrome() {
     const v = location.hash.slice(1);
     if (VIEWS[v] && v !== app.view) { app.view = v; render(); }
   });
+}
 
-  // Keep in sync if data changes in another tab.
-  onExternalChange(async () => {
-    app.state = await loadState();
+let chromeBound = false;
+let starting = null;
+
+/** Load state (or show the lock screen) and render. Safe to call repeatedly. */
+function start() {
+  starting ??= (async () => {
+    try {
+      app.state = await loadState();
+    } catch (e) {
+      if (e instanceof LockedError) { app.encrypted = true; showLockScreen(); return; }
+      throw e;
+    }
+    document.body.classList.remove('locked');
+    await app.refreshSecurity();
     app.kinds = kindMap(app.state.categories);
+    if (!chromeBound) {
+      app.filters.range = app.state.settings.range || 'last90';
+      const hash = location.hash.slice(1);
+      if (VIEWS[hash]) app.view = hash;
+      bindChrome();
+      chromeBound = true;
+    }
+    // ?demo loads sample data when empty (handy for screenshots and the dev server).
+    if (new URLSearchParams(location.search).has('demo') && !app.state.transactions.length) {
+      await app.loadSample();
+    }
     render();
-  });
+  })().finally(() => { starting = null; });
+  return starting;
 }
 
-async function init() {
-  app.state = await loadState();
-  app.kinds = kindMap(app.state.categories);
-  app.filters.range = app.state.settings.range || 'last90';
-  const hash = location.hash.slice(1);
-  if (VIEWS[hash]) app.view = hash;
-  // ?demo loads sample data when empty (handy for screenshots and the dev server).
-  if (new URLSearchParams(location.search).has('demo') && !app.state.transactions.length) {
-    await app.loadSample();
-  }
-  bindChrome();
-  render();
-}
-
-init();
+// Keep in sync when data changes, or the vault is locked/unlocked, in another tab.
+onExternalChange(() => start());
+bindIdleLock();
+start();

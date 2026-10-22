@@ -8,3 +8,5 @@ body { width: 340px; background: var(--surface); }
 .popup .barlist-row { grid-template-columns: 110px 1fr 70px; padding: 2px 0; }
 .popup-alert { display: flex; gap: 8px; align-items: center; font-size: 12.5px; padding: 4px 0; }
 .popup-open { width: 100%; margin-top: 14px; padding: 9px; }
+.popup-unlock { display: grid; gap: 8px; }
+.popup-unlock p { margin: 0 0 4px; font-size: 13px; }

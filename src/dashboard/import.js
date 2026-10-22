@@ -113,7 +113,9 @@ export async function openImportDialog(file, app) {
       const { merged, added, duplicates } = mergeTransactions(app.state.transactions, result.transactions);
       app.state.transactions = merged;
       await app.save(['transactions', 'accounts']);
-      app.toast(`Imported ${added} transactions${duplicates ? ` (${duplicates} duplicates skipped)` : ''}.`);
+      // The extension can't touch files on disk, so remind the user the CSV is still sitting in Downloads.
+      app.toast(`Imported ${added} transactions${duplicates ? ` (${duplicates} duplicates skipped)` : ''}. ` +
+        `You can now delete "${file.name}" from your Downloads folder. SpendLens keeps its own copy${app.encrypted ? ', encrypted' : ''}.`);
       finish(added);
     };
   });
