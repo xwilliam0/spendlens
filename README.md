@@ -60,6 +60,7 @@ test/                    Unit tests
 **Design decisions**
 
 - **CSV import instead of scraping or Plaid.** Scraping bank websites breaks whenever their pages change and touches authenticated sessions. Plaid needs a backend and API secrets. Banks already provide CSV exports, so the extension needs no host permissions and no network access at all.
+- **Offline is enforced by the browser, not just promised.** The manifest's Content Security Policy sets `connect-src 'none'` and `img-src 'self'`. Chrome blocks any `fetch`, XHR, WebSocket, beacon or remote image/script from extension pages, even if a bug or a malicious change tried one. The only permissions are `storage` and `unlimitedStorage`, with no host permissions and no content scripts. Untrusted CSV text is only ever inserted with `textContent`, never `innerHTML`.
 - **Zero dependencies.** MV3 forbids remotely hosted code, and every library would be bundled into a sensitive finance app. Charts and the Excel writer are hand-built.
 - **One sign convention.** Negative means money out. Each bank profile records whether that bank shows purchases as positive numbers (Discover, Amex) or negative (BofA, Chase).
 

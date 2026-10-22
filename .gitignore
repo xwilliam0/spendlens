@@ -1,3 +1,11 @@
 node_modules/
 dist/
 *.zip
+
+# Never commit real financial data. Only the fake files in sample-data/ are allowed.
+*.csv
+*.xlsx
+*.ofx
+*.qfx
+spendlens-backup*.json
+!sample-data/*.csv
