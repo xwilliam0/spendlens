@@ -75,6 +75,16 @@ test('encrypted backups restore only with the passphrase', async () => {
   assert.equal(restored.transactions[0].merchant, 'Ticketmaster');
 });
 
+test('the passphrase itself is never stored, only used to derive the key', async () => {
+  await S.lock();
+  assert.equal(await S.unlock(PASS), true);
+  const backup = JSON.stringify(await S.makeBackup(await S.loadState()));
+  for (const where of [JSON.stringify(local.data), JSON.stringify(session.data), backup]) {
+    assert.ok(!where.includes(PASS));
+    assert.ok(!where.includes(btoa(PASS)));
+  }
+});
+
 test('changing the passphrase re-encrypts; old one stops working', async () => {
   const state = await S.loadState();
   const oldSalt = local.data.vault.kdf.salt;
