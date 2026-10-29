@@ -1,7 +1,7 @@
 // Pure aggregation functions. Nothing here touches the DOM or chrome.* APIs,
 // which keeps it unit-testable in Node.
 
-import { fmtDate, addDays, daysBetween, dayOfWeek, monthKey, monthRange, startOfMonth, endOfMonth, todayISO } from './format.js';
+import { fmtDate, addDays, addMonths, daysBetween, dayOfWeek, monthKey, monthRange, startOfMonth, endOfMonth, todayISO } from './format.js';
 
 /** Map of category id -> kind ('expense' | 'income' | 'transfer'). */
 export function kindMap(categories) {
@@ -251,4 +251,47 @@ export function insights(current, previous, kinds, nameOf, recurring = []) {
     out.push(`${recurring.length} recurring charges cost about $${Math.round(monthly / 100).toLocaleString()}/month ($${Math.round(monthly * 12 / 100).toLocaleString()}/year).`);
   }
   return out;
+}
+
+// Projections from the first few days of a month are mostly noise.
+const MIN_DAYS_FOR_PACE = 7;
+const ALERT_ORDER = { over: 0, pace: 1, unusual: 2 };
+
+/**
+ * Categories that need attention in the month containing `today`:
+ *   over    - spent at least its budget
+ *   pace    - under budget, but the daily rate projects past it by month end
+ *   unusual - no budget, but well above its average month over the previous
+ *             3 months (needs at least 2 months of history)
+ * @returns {{type: 'over'|'pace'|'unusual', category: string, spent: number,
+ *            projected: number, limitCents?: number, typical?: number}[]}
+ */
+export function spendingAlerts(txns, kinds, budgets, today = todayISO()) {
+  const from = startOfMonth(today);
+  const elapsed = daysBetween(from, today) + 1;
+  const daysInMonth = daysBetween(from, endOfMonth(today)) + 1;
+  const out = [];
+
+  for (const b of budgetStatus(txns, kinds, budgets, today)) {
+    if (b.spent >= b.limitCents) out.push({ type: 'over', ...b });
+    else if (elapsed >= MIN_DAYS_FOR_PACE && b.projected > b.limitCents) out.push({ type: 'pace', ...b });
+  }
+
+  const hist = filterTransactions(txns, { from: addMonths(from, -3), to: addDays(from, -1) });
+  const months = new Set(hist.map((t) => monthKey(t.date))).size;
+  if (months >= 2) {
+    const typical = new Map(spendingByCategory(hist, kinds).map((r) => [r.category, Math.round(r.cents / months)]));
+    for (const r of spendingByCategory(filterTransactions(txns, { from, to: today }), kinds)) {
+      if (budgets[r.category] > 0) continue;
+      const avg = typical.get(r.category) || 0;
+      const projected = Math.round((r.cents / elapsed) * daysInMonth);
+      const alreadyHigh = r.cents >= avg * 1.25 && r.cents - avg >= 10000;
+      // Must also be well past where a typical month stands by this day, so one
+      // big monthly purchase (a grocery run) isn't extrapolated into a spike.
+      const aheadOfUsual = r.cents - (avg * elapsed) / daysInMonth;
+      const onPace = elapsed >= MIN_DAYS_FOR_PACE && r.cents >= avg * 0.75 && aheadOfUsual >= 15000 && projected >= avg * 1.5;
+      if (alreadyHigh || onPace) out.push({ type: 'unusual', category: r.category, spent: r.cents, projected, typical: avg });
+    }
+  }
+  return out.sort((a, b) => ALERT_ORDER[a.type] - ALERT_ORDER[b.type] || b.spent - a.spent);
 }

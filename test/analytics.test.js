@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DEFAULT_CATEGORIES } from '../src/lib/categorize.js';
 import {
-  kindMap, summarize, spendingByCategory, monthlyTotals, detectRecurring, previousPeriod, budgetStatus, filterTransactions,
+  kindMap, summarize, spendingByCategory, monthlyTotals, detectRecurring, previousPeriod, budgetStatus, filterTransactions, spendingAlerts,
 } from '../src/lib/analytics.js';
 import { generateSampleData } from '../src/lib/sample.js';
 
@@ -54,6 +54,30 @@ test('budgetStatus projects to month end', () => {
   assert.equal(b.spent, 15000);
   assert.equal(b.projected, 30000);
   assert.equal(b.ratio, 0.5);
+});
+
+test('spendingAlerts: over budget, on pace to exceed, and quiet early in the month', () => {
+  const txns = [t('2026-09-02', -32000, 'food'), t('2026-09-03', -6000, 'shopping'), t('2026-09-09', -6000, 'shopping')];
+  const budgets = { food: 30000, shopping: 25000, groceries: 40000 };
+  assert.deepEqual(spendingAlerts(txns, kinds, budgets, '2026-09-10').map((a) => [a.type, a.category]),
+    [['over', 'food'], ['pace', 'shopping']]); // shopping: $120 in 10 days -> $360 projected
+  assert.deepEqual(spendingAlerts(txns, kinds, budgets, '2026-09-03').map((a) => a.type), ['over']);
+});
+
+test('spendingAlerts: unbudgeted category well above its usual month', () => {
+  const history = ['2026-06', '2026-07', '2026-08'].flatMap((m) => [t(`${m}-05`, -20000, 'food'), t(`${m}-06`, -9000, 'groceries')]);
+  const txns = [...history, t('2026-09-03', -18000, 'food'), t('2026-09-08', -16000, 'food'), t('2026-09-08', -9500, 'groceries')];
+  const [a, ...rest] = spendingAlerts(txns, kinds, {}, '2026-09-10');
+  assert.equal(rest.length, 0); // groceries: one big monthly trip, not a spike
+  assert.deepEqual([a.type, a.category, a.spent, a.typical], ['unusual', 'food', 34000, 20000]);
+  // A budget on the category replaces the comparison with the budget rules.
+  assert.equal(spendingAlerts(txns, kinds, { food: 50000 }, '2026-09-10').some((x) => x.type === 'unusual'), false);
+  // Early warning: under a typical month so far, but far ahead of a typical day 10.
+  const early = [...['2026-06', '2026-07', '2026-08'].map((m) => t(`${m}-05`, -40000, 'food')), t('2026-09-04', -35000, 'food')];
+  const [p] = spendingAlerts(early, kinds, {}, '2026-09-10');
+  assert.deepEqual([p.type, p.category, p.projected], ['unusual', 'food', 105000]);
+  // Not enough history: no comparison at all.
+  assert.deepEqual(spendingAlerts(txns.slice(4), kinds, {}, '2026-09-10'), []);
 });
 
 test('sample data is internally consistent', () => {

@@ -55,6 +55,17 @@ const KEYS = Object.keys(DEFAULT_STATE);
 const VAULT = 'vault';
 const SECURITY = 'security'; // non-sensitive: { autoLockMinutes }
 const DEFAULT_SECURITY = { autoLockMinutes: 15 };
+// Kept outside the vault so the background worker can read it while locked.
+// Holds only on/off switches and timestamps, never financial data.
+const ALERTS = 'alerts';
+export const DEFAULT_ALERTS = Object.freeze({
+  afterImport: true, // spending check dialog after importing
+  badge: true, // alert count on the toolbar icon
+  reminders: true, // Windows notification when it's been a while since the last import
+  reminderDays: 7,
+  lastImportAt: null,
+  lastReminderAt: null,
+});
 
 /** Thrown when data is encrypted and no unlocked key is available. */
 export class LockedError extends Error {
@@ -80,6 +91,17 @@ export async function getSecurity() {
 
 export async function setAutoLockMinutes(minutes) {
   await local.set({ [SECURITY]: { ...(await getSecurity()), autoLockMinutes: minutes } });
+}
+
+export async function getAlertSettings() {
+  const { [ALERTS]: a } = await local.get([ALERTS]);
+  return { ...DEFAULT_ALERTS, ...a };
+}
+
+export async function updateAlertSettings(patch) {
+  const next = { ...(await getAlertSettings()), ...patch };
+  await local.set({ [ALERTS]: next });
+  return next;
 }
 
 export async function isEncrypted() {
@@ -123,15 +145,19 @@ async function cacheKey(key) {
 
 // ---------- Load / save ----------
 
-/** @throws {LockedError} when encrypted and locked */
-export async function loadState() {
+/**
+ * @param {{activity?: boolean}} [opts] activity: false for background reads,
+ *   so they don't restart the auto-lock idle timer
+ * @throws {LockedError} when encrypted and locked
+ */
+export async function loadState({ activity = true } = {}) {
   const raw = await local.get([...KEYS, VAULT]);
   if (!raw[VAULT]) return normalize(raw);
   const key = await sessionKey();
   if (!key) throw new LockedError();
   try {
     const data = await decryptJSON(key, raw[VAULT]);
-    await touch();
+    if (activity) await touch();
     return normalize(data);
   } catch {
     // Cached key no longer matches (e.g. passphrase changed in another tab).

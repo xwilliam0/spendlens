@@ -64,6 +64,24 @@ test('auto-lock after inactivity', async () => {
   assert.equal(await S.unlock(PASS), true);
 });
 
+test('background reads do not restart the auto-lock timer', async () => {
+  const stale = Date.now() - 5 * 60000;
+  session.data.lastActive = stale;
+  await S.loadState({ activity: false });
+  assert.equal(session.data.lastActive, stale);
+  await S.loadState();
+  assert.ok(session.data.lastActive > stale);
+});
+
+test('alert settings default to on, can be turned off, and live outside the vault', async () => {
+  assert.equal((await S.getAlertSettings()).badge, true);
+  await S.updateAlertSettings({ badge: false, reminders: false });
+  const s = await S.getAlertSettings();
+  assert.deepEqual([s.afterImport, s.badge, s.reminders, s.reminderDays], [true, false, false, 7]);
+  assert.ok(!JSON.stringify(local.data.alerts).includes('Ticketmaster'));
+  await S.updateAlertSettings({ badge: true, reminders: true });
+});
+
 test('encrypted backups restore only with the passphrase', async () => {
   const state = await S.loadState();
   const backup = JSON.parse(JSON.stringify(await S.makeBackup(state)));

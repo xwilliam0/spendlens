@@ -57,7 +57,7 @@ npm run package   # dist/spendlens.zip for the Chrome Web Store
 ## Architecture
 
 ```
-manifest.json            MV3, permissions: storage + unlimitedStorage only, strict CSP
+manifest.json            MV3, permissions: storage, unlimitedStorage, alarms, notifications; strict CSP
 src/lib/                 Pure, DOM-free modules (unit tested in Node)
   csv.js                 RFC 4180 parser and writer (+ formula-injection guard)
   importers.js           Bank format detection, sign normalization, dedupe IDs
@@ -68,6 +68,8 @@ src/lib/                 Pure, DOM-free modules (unit tested in Node)
   charts.js              SVG/HTML charts with tooltips and accessible table twins
   crypto.js              AES-256-GCM + PBKDF2 via Web Crypto
   storage.js             Plain or encrypted vault storage, session key, auto-lock, LevelDB scrub
+  alerts.js              Spending alert wording, toolbar badge, import reminders
+src/background.js        Service worker: periodic badge refresh and import reminder
 src/dashboard/           Full-page app: views, import dialog, export
 src/popup/               Toolbar popup
 test/                    Unit tests
@@ -76,7 +78,7 @@ test/                    Unit tests
 **Design decisions**
 
 - **CSV import instead of scraping or Plaid.** Scraping bank websites breaks whenever their pages change and touches authenticated sessions. Plaid needs a backend and API secrets. Banks already provide CSV exports, so the extension needs no host permissions and no network access at all.
-- **Offline is enforced by the browser, not just promised.** The manifest's Content Security Policy sets `connect-src 'none'` and `img-src 'self'`. Chrome blocks any `fetch`, XHR, WebSocket, beacon or remote image/script from extension pages, even if a bug or a malicious change tried one. The only permissions are `storage` and `unlimitedStorage`, with no host permissions and no content scripts. Untrusted CSV text is only ever inserted with `textContent`, never `innerHTML`.
+- **Offline is enforced by the browser, not just promised.** The manifest's Content Security Policy sets `connect-src 'none'` and `img-src 'self'`. Chrome blocks any `fetch`, XHR, WebSocket, beacon or remote image/script from extension pages, even if a bug or a malicious change tried one. The only permissions are `storage`, `unlimitedStorage`, `alarms` and `notifications` (for the optional import reminder, which never includes amounts or merchants), with no host permissions and no content scripts. Untrusted CSV text is only ever inserted with `textContent`, never `innerHTML`.
 - **Zero dependencies.** MV3 forbids remotely hosted code, and every library would be bundled into a sensitive finance app. Charts and the Excel writer are hand-built.
 - **One sign convention.** Negative means money out. Each bank profile records whether that bank shows purchases as positive numbers (Discover, Amex) or negative (BofA, Chase).
 
