@@ -1,7 +1,8 @@
 // Toolbar popup: a glance at this month, plus a button into the dashboard.
 
-import { loadState, unlock, LockedError } from '../lib/storage.js';
+import { loadState, unlock, LockedError, getAlertSettings } from '../lib/storage.js';
 import { kindMap, filterTransactions, summarize, spendingByCategory, budgetStatus } from '../lib/analytics.js';
+import { alertsFor, describeAlert, updateBadge } from '../lib/alerts.js';
 import { fmtMoney, fmtMonth, startOfMonth, endOfMonth, todayISO, addMonths, addDays } from '../lib/format.js';
 import { el, setChildren, barList } from '../lib/charts.js';
 
@@ -44,6 +45,7 @@ async function init() {
     throw e;
   }
   const kinds = kindMap(state.categories);
+  await updateBadge(state, await getAlertSettings());
 
   if (!state.transactions.length) {
     content.replaceChildren(el('p', { class: 'muted' }, 'No data yet. Open the dashboard to import CSV statements from Discover, Bank of America and other banks.'));
@@ -64,7 +66,9 @@ async function init() {
 
   const top = spendingByCategory(month, kinds).slice(0, 5);
   const listEl = el('div');
-  const alerts = budgetStatus(state.transactions, kinds, state.budgets, today).filter((b) => b.ratio >= 0.8);
+  const alerts = alertsFor(state, today);
+  const alerted = new Set(alerts.map((a) => a.category));
+  const close = budgetStatus(state.transactions, kinds, state.budgets, today).filter((b) => b.ratio >= 0.8 && !alerted.has(b.category));
 
   setChildren(content,
     el('div', { class: 'muted', style: { fontSize: '12.5px' } }, 'Spent this month'),
@@ -73,10 +77,13 @@ async function init() {
       change == null ? `${cur.count} transactions` : `${change > 0 ? '▲' : '▼'} ${Math.abs(change * 100).toFixed(0)}% vs. same point last month`),
     top.length ? el('h3', {}, 'Top categories') : null,
     listEl,
-    alerts.length ? el('h3', {}, 'Budget alerts') : null,
-    ...alerts.map((b) => el('div', { class: 'popup-alert' },
-      el('span', { class: 'status-icon', style: { background: b.ratio >= 1 ? 'var(--critical)' : 'var(--warning)' } }, '!'),
-      `${name(b.category)}: ${fmtMoney(b.spent)} of ${fmtMoney(b.limitCents)}${b.ratio >= 1 ? ' (over)' : ''}`)),
+    alerts.length || close.length ? el('h3', {}, 'Spending alerts') : null,
+    ...alerts.map((a) => el('div', { class: 'popup-alert' },
+      el('span', { class: 'status-icon', style: { background: a.type === 'over' ? 'var(--critical)' : 'var(--serious)' } }, '!'),
+      describeAlert(a, name))),
+    ...close.map((b) => el('div', { class: 'popup-alert' },
+      el('span', { class: 'status-icon', style: { background: 'var(--warning)' } }, '!'),
+      `${name(b.category)} is close to its limit: ${fmtMoney(b.spent)} of ${fmtMoney(b.limitCents)}.`)),
   );
   barList(listEl, { rows: top.map((r) => ({ label: name(r.category), value: r.cents })), format: fmtMoney });
 }

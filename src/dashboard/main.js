@@ -3,7 +3,9 @@
 
 import {
   loadState, saveState, onExternalChange, LockedError, unlock, lock, touch, isEncrypted, idleMinutesRemaining, clearState,
+  getAlertSettings, updateAlertSettings,
 } from '../lib/storage.js';
+import { alertsFor, alertKey, describeAlert, updateBadge } from '../lib/alerts.js';
 import { kindMap, filterTransactions, spendingByCategory } from '../lib/analytics.js';
 import { addDays, addMonths, endOfMonth, startOfMonth, todayISO, fmtDate } from '../lib/format.js';
 import { el, setChildren, dataTable, hideTooltip } from '../lib/charts.js';
@@ -87,6 +89,7 @@ export const app = {
     app.kinds = kindMap(app.state.categories);
     try {
       await saveState(app.state, keys);
+      await app.refreshBadge();
     } catch (e) {
       if (!(e instanceof LockedError)) throw e;
       showLockScreen();
@@ -100,6 +103,8 @@ export const app = {
     $('#lock-btn').hidden = !app.encrypted;
   },
 
+  async refreshBadge() { await updateBadge(app.state, await getAlertSettings()); },
+  goTo(view) { app.view = view; location.hash = view; render(); },
   rerender() { render(); },
   toast,
   confirm: confirmDialog,
@@ -248,6 +253,24 @@ function passphraseDialog(message, submitLabel = 'Continue') {
   });
 }
 
+/** Alerts that appeared with the import just finished. */
+function spendingCheckDialog(alerts) {
+  const d = $('#confirm-dialog');
+  const go = (view) => { d.close(); app.goTo(view); };
+  d.replaceChildren(
+    el('div', { class: 'dialog-body' },
+      el('h2', { style: { marginTop: 0 } }, 'Spending check'),
+      ...alerts.map((a) => el('div', { class: 'alert-row' },
+        el('span', { class: 'status-icon', style: { background: a.type === 'over' ? 'var(--critical)' : 'var(--serious)' } }, '!'),
+        describeAlert(a, app.catName))),
+      el('p', { class: 'muted' }, 'You can turn this check off in Settings → Alerts.')),
+    el('div', { class: 'dialog-foot' },
+      el('button', { class: 'btn', onclick: () => go('settings') }, 'Alert settings'),
+      el('button', { class: 'btn', onclick: () => go('budgets') }, 'View budgets'),
+      el('button', { class: 'btn btn-primary', onclick: () => d.close() }, 'OK')));
+  d.showModal();
+}
+
 // ---------- Lock screen ----------
 
 function showLockScreen() {
@@ -354,11 +377,18 @@ function bindChrome() {
   $('#file-input').addEventListener('change', async (e) => {
     const files = [...e.target.files];
     e.target.value = '';
+    const before = new Set(alertsFor(app.state).map(alertKey));
+    let importedAny = false;
     for (const f of files) {
       const imported = await openImportDialog(f, app);
       if (imported == null) break; // user cancelled the batch
+      importedAny = true;
     }
     render();
+    if (!importedAny) return;
+    const settings = await updateAlertSettings({ lastImportAt: Date.now(), lastReminderAt: null });
+    const fresh = alertsFor(app.state).filter((a) => !before.has(alertKey(a)));
+    if (settings.afterImport && fresh.length) spendingCheckDialog(fresh);
   });
 
   const menuBtn = $('#export-btn'), menu = $('#export-menu');
@@ -404,6 +434,7 @@ function start() {
     }
     document.body.classList.remove('locked');
     await app.refreshSecurity();
+    await app.refreshBadge();
     app.kinds = kindMap(app.state.categories);
     if (!chromeBound) {
       app.filters.range = app.state.settings.range || 'last90';

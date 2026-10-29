@@ -4,7 +4,8 @@
   "short_name": "SpendLens",
   "version": "1.0.0",
   "description": "Import Discover, Bank of America, Chase & more CSV statements, auto-categorize spending, and see where your money goes. 100% local.",
-  "permissions": ["storage", "unlimitedStorage"],
+  "permissions": ["storage", "unlimitedStorage", "alarms", "notifications"],
+  "background": { "service_worker": "src/background.js", "type": "module" },
   "action": {
     "default_popup": "src/popup/popup.html",
     "default_title": "SpendLens",

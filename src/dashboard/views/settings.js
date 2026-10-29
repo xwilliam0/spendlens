@@ -1,9 +1,10 @@
 import { categorize } from '../../lib/categorize.js';
 import {
   clearState, DEFAULT_STATE, readBackup, getSecurity, setAutoLockMinutes, touch,
-  enableEncryption, changePassphrase, disableEncryption,
+  enableEncryption, changePassphrase, disableEncryption, getAlertSettings, updateAlertSettings,
 } from '../../lib/storage.js';
 import { passphraseProblem } from '../../lib/crypto.js';
+import { notify } from '../../lib/alerts.js';
 import { hash } from '../../lib/importers.js';
 import { el } from '../../lib/charts.js';
 
@@ -158,7 +159,50 @@ export function renderSettings(root, app) {
 
   const security = el('div');
   renderSecurity(security, app);
-  root.replaceChildren(security, accounts, categories, rules, data);
+  const alerts = el('div');
+  renderAlerts(alerts, app);
+  root.replaceChildren(security, alerts, accounts, categories, rules, data);
+}
+
+// ----- Alerts -----
+
+const REMINDER_OPTIONS = [[3, '3 days'], [7, '7 days'], [14, '14 days'], [30, '30 days']];
+
+async function renderAlerts(container, app) {
+  const s = await getAlertSettings();
+  const save = async (patch, message) => {
+    await updateAlertSettings(patch);
+    await app.refreshBadge();
+    app.toast(message);
+  };
+  const toggle = (key, label, hint) => {
+    const box = el('input', { type: 'checkbox', checked: s[key] });
+    box.addEventListener('change', () => save({ [key]: box.checked }, `${label}: ${box.checked ? 'on' : 'off'}.`));
+    return el('label', { class: 'check' }, box, el('span', {}, label, el('span', { class: 'hint' }, hint)));
+  };
+
+  const days = el('select', { 'aria-label': 'Remind me after' },
+    REMINDER_OPTIONS.map(([v, label]) => el('option', { value: String(v), selected: v === s.reminderDays }, label)));
+  days.addEventListener('change', () => save({ reminderDays: Number(days.value) }, 'Reminder interval updated.'));
+  const test = el('button', {
+    class: 'btn btn-small', type: 'button',
+    onclick: async () => {
+      const sent = await notify('test', 'SpendLens test notification', 'Notifications are working. Click to open the dashboard.');
+      app.toast(sent
+        ? 'Test notification sent. If nothing appeared, check that Windows notifications are allowed for Chrome.'
+        : 'Notifications only work when SpendLens runs as a Chrome extension.');
+    },
+  }, 'Send test notification');
+
+  container.replaceChildren(section('Alerts',
+    'Alerts cover the current month: categories over their budget, on pace to go over (after the first week), or, for categories without a budget, well above your average of the previous 3 months. They update when you import, since that is the only time SpendLens sees new spending.',
+    el('div', { class: 'toggle-list' },
+      toggle('afterImport', 'Spending check after each import', 'Shows a summary of any new alerts as soon as an import finishes.'),
+      toggle('badge', 'Alert count on the toolbar icon', 'Shows the number of alerts on the SpendLens icon. Red means something is over budget.'),
+      toggle('reminders', 'Remind me to import new statements', 'Sends a Windows notification when it has been a while since your last import. The notification never includes amounts or merchants.')),
+    el('div', { class: 'inline-form' },
+      el('label', {}, 'Remind me after ', days), test,
+      s.lastImportAt ? el('span', { class: 'muted' }, `Last import: ${new Date(s.lastImportAt).toLocaleDateString()}`) : null)));
 }
 
 // ----- Security (encryption at rest) -----
